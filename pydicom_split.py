@@ -5,6 +5,7 @@ from __future__ import print_function
 import glob
 import os
 #import time
+import sys
 
 import numpy
 
@@ -97,6 +98,25 @@ def directory_name(directory, i):
     return directory + '.%d' % (i + 1)
 
 
+def validate_dicom_directory(directory):
+    dimensions = None
+    for filename in os.listdir(directory):
+        path = os.path.join(directory, filename)
+        try:
+            ds = pydicom.dcmread(path, stop_before_pixels=True)
+        except pydicom.errors.InvalidDicomError:
+            print('WARNING: %s is not a valid DICOM file' % filename,
+                  file=sys.stderr)
+            continue
+        if dimensions is None:
+            dimensions = (ds.Rows, ds.Columns)
+        elif (hasattr(ds, 'Rows') and hasattr(ds, 'Columns') and
+              dimensions != (ds.Rows, ds.Columns)):
+            print('WARNING: %s has different dimensions' % filename,
+                  file=sys.stderr)
+        yield path
+
+
 def split_dicom_directory(directory, axis, n):
     output_paths = [directory_name(directory, i) for i in range(n)]
     for output_path in output_paths:
@@ -108,8 +128,8 @@ def split_dicom_directory(directory, axis, n):
     #modification_date = time.strftime('%Y%m%d')
     #modification_time = time.strftime('%H%M%S')
 
-    for filename in glob.glob(os.path.join(directory, '*.dcm')):
-        split_dicom_file(filename, axis, output_paths)
+    for dicom_filename in validate_dicom_directory(directory):
+        split_dicom_file(dicom_filename, axis, output_paths)
 
 
 if __name__ == '__main__':
