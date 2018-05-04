@@ -50,7 +50,8 @@ def split_data(ds, data, axis, size, i, image_position_patient,
     ds.ImagePositionPatient = list(position[:3])
 
 
-def split_dicom_file(filename, axis, output_paths, uids=None, origin=False):
+def split_dicom_file(filename, axis, output_paths, uids=None, origin=False,
+                     descriptions=None):
     ds = pydicom.dcmread(filename)
     n = len(output_paths)
 
@@ -82,6 +83,9 @@ def split_dicom_file(filename, axis, output_paths, uids=None, origin=False):
             ds.SeriesInstanceUID = '%s.%d' % (series_instance_uid, i + 1)
         else:
             ds.SOPInstanceUID, ds.SeriesInstanceUID = uids[i]
+
+        if descriptions:
+            ds.SeriesDescription = descriptions[i]
 
         #ds.SeriesDate = modification_date
         #ds.SeriesTime = modification_time
@@ -125,10 +129,13 @@ def validate_dicom_directory(directory):
         yield path
 
 
-def split_dicom_directory(directory, axis, n=None, uids=None, origin=False):
+def split_dicom_directory(directory, axis, n=None, uids=None, origin=False,
+                          descriptions=None):
     if uids is not None:
         n = len(uids)
     if n is None:
+        raise ValueError
+    if descriptions and len(descriptions) != n:
         raise ValueError
     output_paths = [directory_name(directory, i) for i in range(n)]
     for output_path in output_paths:
@@ -141,7 +148,8 @@ def split_dicom_directory(directory, axis, n=None, uids=None, origin=False):
     #modification_time = time.strftime('%H%M%S')
 
     for dicom_filename in validate_dicom_directory(directory):
-        split_dicom_file(dicom_filename, axis, output_paths, uids, origin)
+        split_dicom_file(dicom_filename, axis, output_paths, uids, origin,
+                         descriptions)
 
 
 if __name__ == '__main__':
@@ -164,9 +172,11 @@ if __name__ == '__main__':
     parser.add_argument('-a', '--axis', type=int, default=1,
                         help='axis (0 for rows, 1 for columns)'
                              ', default columns')
+    parser.add_argument('-d', '--descriptions', nargs='*',
+                        help='set the series descriptions')
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('-n', type=int, help='split into N volumes')
-    group.add_argument('SOP_UID/Series_UID',
+    group.add_argument('-u', '--uids',
                        nargs='*', default=[], action=ParseAction,
                        help='split into a volume for each forward slash'
                             'separated SOP/series instance UID pair')
@@ -175,5 +185,6 @@ if __name__ == '__main__':
     split_dicom_directory(args['DICOM_DIRECTORY'],
                           args['axis'],
                           n=args['n'],
-                          uids=args['SOP_UID/Series_UID'],
-                          origin=args['origin'])
+                          uids=args['uids'],
+                          origin=args['origin'],
+                          descriptions=args['descriptions'])
