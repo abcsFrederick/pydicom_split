@@ -2,167 +2,189 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 
-import glob
+import copy
+import math
 import os
-#import time
 import sys
+import warnings
 
 import numpy
 
 import pydicom
 
 
-def affine(image_position_patient, image_orientation_patient, pixel_spacing):
-    S = numpy.array(image_position_patient)
-    F = numpy.array([image_orientation_patient[3:],
-                     image_orientation_patient[:3]]).T
-    delta_r, delta_c = pixel_spacing
+class DICOMDirectory:
+    def __init__(self, directory=None):
+        self._directory = directory
 
-    A = numpy.array([[F[0, 0]*delta_r, F[0, 1]*delta_c, 0, S[0]],
-                     [F[1, 0]*delta_r, F[1, 1]*delta_c, 0, S[1]],
-                     [F[2, 0]*delta_r, F[2, 1]*delta_c, 0, S[2]],
-                     [              0,               0, 0,    1]])
-    return A
+    @property
+    def directory(self):
+        return self._directory
 
+    @directory.setter
+    def directory(self, directory):
+        self._directory = directory
 
-def crop_data(ds, data, start, size):
-    cropped = data[start[0]:start[0] + size[0],
-                   start[1]:start[1] + size[1]]
-    ds.PixelData = cropped.tostring()
-    ds.Rows, ds.Columns = cropped.shape
-
-
-def split_data(ds, data, axis, size, i, image_position_patient,
-               image_orientation_patient, pixel_spacing, origin=False):
-    start = [0]*len(data.shape)
-    start[axis] = i*size[axis]
-
-    crop_data(ds, data, start, size)
-
-    if not origin:
-        return
-
-    # update image position (patient)
-    A = affine(image_position_patient,
-               image_orientation_patient,
-               pixel_spacing)
-    position = A.dot(start + [0, 1])
-    ds.ImagePositionPatient = list(position[:3])
-
-
-def split_dicom_file(filename, axis, output_paths, uids=None, origin=False,
-                     descriptions=None):
-    ds = pydicom.dcmread(filename)
-    n = len(output_paths)
-
-    sop_instance_uid = ds.SOPInstanceUID
-    series_instance_uid = ds.SeriesInstanceUID
-
-    try:
-        pixel_spacing = list(map(float, ds.PixelSpacing))
-        image_position_patient = list(map(float, ds.ImagePositionPatient))
-        image_orientation_patient = list(map(float, ds.ImageOrientationPatient))
-    except AttributeError:
-        pixel_spacing = None
-        image_position_patient = None
-        image_orientation_patient = None
-
-    #series_description = ds.SeriesDescription
-
-    try:
-        data = ds.pixel_array
-        size = list(data.shape)
-        size[axis] = int(size[axis]/n)
-    except TypeError:
-        data = None
-        size = None
-
-    for i, output_path in enumerate(output_paths):
-        if uids is None:
-            ds.SOPInstanceUID = '%s.%d' % (sop_instance_uid, i + 1)
-            ds.SeriesInstanceUID = '%s.%d' % (series_instance_uid, i + 1)
+    def __iter__(self):
+        if self._directory is None:
+            self.filenames = []
         else:
-            ds.SOPInstanceUID, ds.SeriesInstanceUID = uids[i]
+            self.filenames = os.listdir(self._directory)
+        return self
 
-        if descriptions:
-            ds.SeriesDescription = descriptions[i]
+    def __next__(self):
+        while self.filenames:
+            filename = self.filenames.pop(0)
+            path = os.path.join(self._directory, filename)
+            try:
+                dataset = pydicom.dcmread(path)
+            except pydicom.errors.InvalidDicomError:
+                warnings.warn('%s is not a valid DICOM file' % filename)
+                continue
+            return path, dataset
+        raise StopIteration
 
-        #ds.SeriesDate = modification_date
-        #ds.SeriesTime = modification_time
-        #ds.ImageType = ['DERIVED', 'SECONDARY']
-        #ds.SeriesDescription = \
-        #    '%s (split, %d of %d)' % (series_description, i + 1, n)
 
-        #ds.Manufacturer (???)
-        #ds.ManufacturerModelName (???)
-        #ds.DerivationDescription (not set)
-        #ds.SourceImageSequence (not set)
+class DICOMSplitter:
+    def __init__(self, pixel_array=None, axis=0, n=2):
+        self._pixel_array = pixel_array
+        self._axis = axis
+        self._n = n
 
-        if data is not None:
-            split_data(ds, data, axis, size, i, image_position_patient,
-                       image_orientation_patient, pixel_spacing, origin)
+    @property
+    def pixel_array(self):
+        return self._pixel_array
 
-        ds.save_as(os.path.join(output_path, os.path.basename(filename)))
+    @pixel_array.setter
+    def pixel_array(self, pixel_array):
+        self._pixel_array = pixel_array
+
+    @property
+    def axis(self):
+        return self._axis
+
+    @axis.setter
+    def axis(self, axis):
+        self._axis = axis
+
+    @property
+    def n(self):
+        return self._n
+
+    @n.setter
+    def n(self, n):
+        self._n = n
+
+    def __iter__(self):
+        self.index = 0
+        if self._pixel_array is not None:
+            size = self._pixel_array.shape[self._axis]
+            self.size = int(math.floor(size/self._n))
+        return self
+
+    def __next__(self):
+        if self.index == self._n:
+            raise StopIteration
+
+        index = self.index
+
+        if self._pixel_array is None:
+            self.index += 1
+            return index, None, None
+
+        start = numpy.zeros(self._pixel_array.ndim, numpy.int16)
+        start[self._axis] = index * self.size
+        stop = numpy.zeros(self._pixel_array.ndim, numpy.int16)
+        stop[self._axis] = start[self._axis] + self.size
+        indices = numpy.arange(start[self._axis], stop[self._axis])
+        self.index += 1
+        return index, start, numpy.take(self._pixel_array, indices, self._axis)
+
+
+def affine(dataset):
+    S = numpy.array(dataset.ImagePositionPatient, numpy.float64)
+    F = numpy.array([dataset.ImageOrientationPatient[3:],
+                     dataset.ImageOrientationPatient[:3]], numpy.float64).T
+    delta_r, delta_c = map(float, dataset.PixelSpacing)
+    return numpy.array([[F[0, 0]*delta_r, F[0, 1]*delta_c, 0, S[0]],
+                        [F[1, 0]*delta_r, F[1, 1]*delta_c, 0, S[1]],
+                        [F[2, 0]*delta_r, F[2, 1]*delta_c, 0, S[2]],
+                        [              0,               0, 0,    1]])
 
 
 def directory_name(directory, i):
-    directory = directory.rstrip(os.sep)
-    return directory + '.%d' % (i + 1)
+    return directory.rstrip(os.sep) + '.%d' % (i + 1)
 
 
-def validate_dicom_directory(directory):
-    dimensions = None
-    for filename in os.listdir(directory):
-        path = os.path.join(directory, filename)
-        try:
-            ds = pydicom.dcmread(path, stop_before_pixels=True)
-        except pydicom.errors.InvalidDicomError:
-            print('WARNING: %s is not a valid DICOM file' % filename,
-                  file=sys.stderr)
-            continue
-        if dimensions is None:
-            dimensions = (ds.Rows, ds.Columns)
-        elif (hasattr(ds, 'Rows') and hasattr(ds, 'Columns') and
-              dimensions != (ds.Rows, ds.Columns)):
-            print('WARNING: %s has different dimensions' % filename,
-                  file=sys.stderr)
-        yield path
-
-
-def split_dicom_directory(directory, axis, n=None, uids=None, origin=False,
-                          descriptions=None):
-    if uids is not None:
-        n = len(uids)
-    if n is None:
-        raise ValueError
-    if descriptions and len(descriptions) != n:
-        raise ValueError
-    output_paths = [directory_name(directory, i) for i in range(n)]
-    for output_path in output_paths:
+def make_output_paths(directory, n):
+    output_paths = []
+    for i in range(n):
+        output_path = directory_name(directory, i)
         try:
             os.mkdir(output_path)
         except FileExistsError:
             pass
+        output_paths.append(output_path)
+    return output_paths
 
-    #modification_date = time.strftime('%Y%m%d')
-    #modification_time = time.strftime('%H%M%S')
 
-    for dicom_filename in validate_dicom_directory(directory):
-        split_dicom_file(dicom_filename, axis, output_paths, uids, origin,
-                         descriptions)
+def set_pixel_data(dataset, pixel_array):
+    dataset.PixelData = pixel_array.tostring()
+    dataset.Rows, dataset.Columns = pixel_array.shape
+
+
+def split_dicom_directory(directory, axis=0, n=2,
+                          update_image_position_patient=False,
+                          instance_uids=None, series_descriptions=None):
+    if instance_uids:
+        n = len(instance_uids)
+    if n is None:
+        raise ValueError
+    if series_descriptions and len(series_descriptions) != n:
+        raise ValueError
+
+    output_paths = make_output_paths(directory, n)
+
+    for path, dataset in DICOMDirectory(sys.argv[1]):
+        try:
+            pixel_array = dataset.pixel_array
+        except TypeError:
+            pixel_array = None
+        dicom_splitter = DICOMSplitter(pixel_array, axis, n)
+
+        for i, origin, pixel_array in dicom_splitter:
+            split_dataset = copy.deepcopy(dataset)
+
+            if pixel_array is not None:
+                set_pixel_data(split_dataset, pixel_array)
+
+                if update_image_position_patient:
+                    affine_matrix = affine(dataset)
+                    position = affine_matrix.dot(numpy.append(origin, [0, 1]))
+                    split_dataset.ImagePositionPatient = list(position[:3])
+
+            if instance_uids:
+                split_dataset.SOPInstanceUID, split_dataset.SeriesInstanceUID = instance_uids[i]
+            else:
+                split_dataset.SOPInstanceUID = '%s.%d' % (dataset.SOPInstanceUID, i + 1)
+                split_dataset.SeriesInstanceUID = '%s.%d' % (dataset.SeriesInstanceUID, i + 1)
+
+            if series_descriptions:
+                split_dataset.SeriesDescription = series_descriptions[i]
+
+            split_dataset.save_as(os.path.join(output_paths[i], os.path.basename(path)))
 
 
 if __name__ == '__main__':
     import argparse
 
     class ParseAction(argparse.Action):
-         def __call__(self, parser, namespace, values, option_string=None):
-             values = [value.split('/') for value in values]
-             bad = ['/'.join(value) for value in values if len(value) != 2]
-             if bad:
-                vars(namespace).setdefault(argparse._UNRECOGNIZED_ARGS_ATTR,
-                                           bad)
-             setattr(namespace, self.dest, values)
+        def __call__(self, parser, namespace, values, option_string=None):
+            values = [value.split('/') for value in values]
+            bad = ['/'.join(value) for value in values if len(value) != 2]
+            if bad:
+                vars(namespace).setdefault(argparse._UNRECOGNIZED_ARGS_ATTR, bad)
+            setattr(namespace, self.dest, values)
 
     parser = argparse.ArgumentParser()
     parser.add_argument('DICOM_DIRECTORY')
@@ -183,8 +205,8 @@ if __name__ == '__main__':
 
     args = vars(parser.parse_args())
     split_dicom_directory(args['DICOM_DIRECTORY'],
-                          args['axis'],
+                          axis=args['axis'],
                           n=args['n'],
-                          uids=args['uids'],
-                          origin=args['origin'],
-                          descriptions=args['descriptions'])
+                          update_image_position_patient=args['origin'],
+                          instance_uids=args['uids'],
+                          series_descriptions=args['descriptions'])
