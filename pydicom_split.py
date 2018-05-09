@@ -93,7 +93,13 @@ class DICOMSplitter:
             return index, None, None
 
         start = numpy.zeros(self._pixel_array.ndim, numpy.int16)
-        start[self._axis] = index * self.size
+        remainder = self._pixel_array.shape[self._axis] % self._n
+        offset = max(0, index + 1 + remainder - self._n)
+        if offset:
+            warnings.warn('image axis %d not divisible by %d'
+                          ', split %d offset 1 pixel from previous split'
+                          % (self._axis, self._n, index + 1))
+        start[self._axis] = index * self.size + offset
         stop = numpy.zeros(self._pixel_array.ndim, numpy.int16)
         stop[self._axis] = start[self._axis] + self.size
         indices = numpy.arange(start[self._axis], stop[self._axis])
