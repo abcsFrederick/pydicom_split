@@ -115,7 +115,7 @@ def affine(dataset):
     return numpy.array([[F[0, 0]*delta_r, F[0, 1]*delta_c, 0, S[0]],
                         [F[1, 0]*delta_r, F[1, 1]*delta_c, 0, S[1]],
                         [F[2, 0]*delta_r, F[2, 1]*delta_c, 0, S[2]],
-                        [              0,               0, 0,    1]])
+                        [0, 0, 0, 1]])
 
 
 def directory_name(directory, i):
@@ -170,15 +170,18 @@ def split_dicom_directory(directory, axis=0, n=2,
                     split_dataset.ImagePositionPatient = list(position[:3])
 
             if instance_uids:
-                split_dataset.SOPInstanceUID, split_dataset.SeriesInstanceUID = instance_uids[i]
+                split_dataset.SOPInstanceUID = instance_uids[0]
+                split_dataset.SeriesInstanceUID = instance_uids[1]
             else:
-                split_dataset.SOPInstanceUID = '%s.%d' % (dataset.SOPInstanceUID, i + 1)
-                split_dataset.SeriesInstanceUID = '%s.%d' % (dataset.SeriesInstanceUID, i + 1)
+                suffix = '.%s' % str(i + 1)
+                split_dataset.SOPInstanceUID += suffix
+                split_dataset.SeriesInstanceUID += suffix
 
             if series_descriptions:
                 split_dataset.SeriesDescription = series_descriptions[i]
 
-            split_dataset.save_as(os.path.join(output_paths[i], os.path.basename(path)))
+            filename = os.path.join(output_paths[i], os.path.basename(path))
+            split_dataset.save_as(filename)
 
 
 if __name__ == '__main__':
@@ -189,7 +192,8 @@ if __name__ == '__main__':
             values = [value.split('/') for value in values]
             bad = ['/'.join(value) for value in values if len(value) != 2]
             if bad:
-                vars(namespace).setdefault(argparse._UNRECOGNIZED_ARGS_ATTR, bad)
+                vars(namespace).setdefault(argparse._UNRECOGNIZED_ARGS_ATTR,
+                                           bad)
             setattr(namespace, self.dest, values)
 
     parser = argparse.ArgumentParser()
