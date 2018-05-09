@@ -41,6 +41,9 @@ class DICOMDirectory:
             except pydicom.errors.InvalidDicomError:
                 warnings.warn('%s is not a valid DICOM file' % filename)
                 continue
+            if not hasattr(dataset, 'SOPInstanceUID'):
+                warnings.warn('%s is not a valid DICOM file' % filename)
+                continue
             return path, dataset
         raise StopIteration
 
