@@ -157,7 +157,7 @@ def split_dicom_directory(directory, axis=0, n=2,
     for path, dataset in DICOMDirectory(sys.argv[1]):
         try:
             pixel_array = dataset.pixel_array
-        except TypeError:
+        except (TypeError, AttributeError):
             pixel_array = None
         dicom_splitter = DICOMSplitter(pixel_array, axis, n)
 
