@@ -203,9 +203,11 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
         if patient_ids is None:
             patient_ids = parse_patient(dataset.PatientID)
         if len(patient_names) != n:
-            raise ValueError('failed to parse PatientName')
+            patient_names = n * [str(dataset.PatientName)]
+            warnings.warn('failed to parse PatientName %s' % dataset.PatientName)
         if len(patient_ids) != n:
-            raise ValueError('failed to parse PatientID')
+            patient_ids = n * [str(dataset.PatientID)]
+            warnings.warn('failed to parse PatientID %s' % dataset.PatientID)
 
         source_patient = Dataset()
         # FIXME: remove '_1'?
@@ -225,7 +227,7 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
                 if not keep_origin:
                     affine_matrix = affine(dataset)
                     position = affine_matrix.dot(numpy.append(origin, [0, 1]))
-                    split_dataset.ImagePositionPatient = list(position[:3])
+                    split_dataset.ImagePositionPatient = [str(p)[:16] for p in position[:3]]
 
             # FIXME: should there be different SOPInstanceUIDs per image file?
             split_dataset.SOPInstanceUID = x667_uuid()
@@ -260,7 +262,7 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--series_descriptions', nargs='*',
                         help='set the series descriptions')
     parser.add_argument('-d', '--derivation_description',
-                        default='Original volume split into equal parts',
+                        default='Original volume split into equal subvolumes for each patient',
                         help='set the derivation description')
     parser.add_argument('-p', '--patient_names', nargs='*',
                         help='patient names')
