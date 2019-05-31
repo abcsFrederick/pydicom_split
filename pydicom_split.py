@@ -6,11 +6,14 @@ import copy
 import math
 import os
 import sys
+import uuid
 import warnings
 
 import numpy
 
 import pydicom
+from pydicom.sequence import Sequence
+from pydicom.dataset import Dataset
 
 
 class DICOMDirectory:
@@ -110,6 +113,18 @@ class DICOMSplitter:
         return index, start, numpy.take(self._pixel_array, indices, self._axis)
 
 
+def x667_uuid():
+    return '2.25.%d' % uuid.uuid4()
+
+
+def parse_patient(patient, delimiter='_'):
+    root, *ids = str(patient).split(delimiter)
+    if ids[-1] == '1':
+        warnings.warn('patient %s ends with 1, removing...' % patient)
+        ids.pop()
+    return [delimiter.join((root, id_)) for id_ in ids]
+
+
 def affine(dataset):
     S = numpy.array(dataset.ImagePositionPatient, numpy.float64)
     F = numpy.array([dataset.ImageOrientationPatient[3:],
@@ -142,11 +157,12 @@ def set_pixel_data(dataset, pixel_array):
     dataset.Rows, dataset.Columns = pixel_array.shape
 
 
-def split_dicom_directory(directory, axis=0, n=2,
-                          update_image_position_patient=False,
-                          instance_uids=None, series_descriptions=None):
-    if instance_uids:
-        n = len(instance_uids)
+def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
+                          series_instance_uids=None, series_descriptions=None,
+                          derivation_description=None, patient_names=None,
+                          patient_ids=None):
+    if series_instance_uids:
+        n = len(series_instance_uids)
     if n is None:
         raise ValueError
     if series_descriptions and len(series_descriptions) != n:
@@ -161,27 +177,70 @@ def split_dicom_directory(directory, axis=0, n=2,
             pixel_array = None
         dicom_splitter = DICOMSplitter(pixel_array, axis, n)
 
+        dataset.ImageType = ['DERIVED', 'SECONDARY']
+
+        dataset.DerivationDescription = derivation_description
+
+        source_image = Dataset()
+        source_image.ReferencedSOPClassUID = dataset.SOPClassUID
+        # FIXME: there are different SOPInstanceUIDs per image file
+        source_image.ReferencedSOPInstanceUID = dataset.SOPInstanceUID
+        purpose_of_reference = Dataset()
+        purpose_of_reference.CodeValue = '113130'
+        purpose_of_reference.CodingSchemeDesignator = 'DCM'
+        purpose_of_reference.CodeMeaning = 'Predecessor containing group of imaging subjects'
+        source_image.PurposeOfReferenceCodeSequence = Sequence([purpose_of_reference])
+        dataset.DerivationImageSequence = Sequence([Dataset()])
+        dataset.DerivationImageSequence[0].SourceImageSequence = Sequence([source_image])
+        derivation_code = Dataset()
+        derivation_code.CodeValue = '113131'
+        derivation_code.CodingSchemeDesignator = 'DCM'
+        derivation_code.CodeMeaning = 'Extraction of individual subject from group'
+        dataset.DerivationImageSequence[0].DerivationCodeSequence = Sequence([derivation_code])
+
+        if patient_names is None:
+            patient_names = parse_patient(dataset.PatientName)
+        if patient_ids is None:
+            patient_ids = parse_patient(dataset.PatientID)
+        if len(patient_names) != n:
+            raise ValueError('failed to parse PatientName')
+        if len(patient_ids) != n:
+            raise ValueError('failed to parse PatientID')
+
+        source_patient = Dataset()
+        # FIXME: remove '_1'?
+        source_patient.PatientName = dataset.PatientName
+        source_patient.PatientID = dataset.PatientID
+        dataset.SourcePatientGroupIdentificationSequence = Sequence([source_patient])
+
+        if not series_instance_uids:
+            series_instance_uids = [x667_uuid() for i in range(n)]
+
         for i, origin, pixel_array in dicom_splitter:
             split_dataset = copy.deepcopy(dataset)
 
             if pixel_array is not None:
                 set_pixel_data(split_dataset, pixel_array)
 
-                if update_image_position_patient:
+                if not keep_origin:
                     affine_matrix = affine(dataset)
                     position = affine_matrix.dot(numpy.append(origin, [0, 1]))
                     split_dataset.ImagePositionPatient = list(position[:3])
 
-            if instance_uids:
-                split_dataset.SOPInstanceUID = instance_uids[0]
-                split_dataset.SeriesInstanceUID = instance_uids[1]
-            else:
-                suffix = '.%s' % str(i + 1)
-                split_dataset.SOPInstanceUID += suffix
-                split_dataset.SeriesInstanceUID += suffix
+            # FIXME: should there be different SOPInstanceUIDs per image file?
+            split_dataset.SOPInstanceUID = x667_uuid()
+            split_dataset.file_meta.MediaStorageSOPInstanceUID = split_dataset.SOPInstanceUID
+
+            split_dataset.SeriesInstanceUID = series_instance_uids[i]
+            split_dataset.StorageMediaFileSetUID = series_instance_uids[i] + '.0'
 
             if series_descriptions:
                 split_dataset.SeriesDescription = series_descriptions[i]
+
+            split_dataset.PatientName = patient_names[i]
+            split_dataset.PatientID = patient_names[i]
+
+            split_dataset.SeriesNumber = (10 *  split_dataset.SeriesNumber) + i + 1
 
             filename = os.path.join(output_paths[i], os.path.basename(path))
             split_dataset.save_as(filename)
@@ -190,36 +249,27 @@ def split_dicom_directory(directory, axis=0, n=2,
 if __name__ == '__main__':
     import argparse
 
-    class ParseAction(argparse.Action):
-        def __call__(self, parser, namespace, values, option_string=None):
-            values = [value.split('/') for value in values]
-            bad = ['/'.join(value) for value in values if len(value) != 2]
-            if bad:
-                vars(namespace).setdefault(argparse._UNRECOGNIZED_ARGS_ATTR,
-                                           bad)
-            setattr(namespace, self.dest, values)
-
     parser = argparse.ArgumentParser()
     parser.add_argument('DICOM_DIRECTORY')
-    parser.add_argument('-o', '--origin', action='store_true',
-                        help='origin position from offset from original'
-                             ' volume, default no')
     parser.add_argument('-a', '--axis', type=int, default=1,
                         help='axis (0 for rows, 1 for columns)'
                              ', default columns')
-    parser.add_argument('-d', '--descriptions', nargs='*',
+    parser.add_argument('-o', '--keep_origin', action='store_true',
+                        help='origin position from offset from original'
+                             ' volume, default no')
+    parser.add_argument('-s', '--series_descriptions', nargs='*',
                         help='set the series descriptions')
+    parser.add_argument('-d', '--derivation_description',
+                        default='Original volume split into equal parts',
+                        help='set the derivation description')
+    parser.add_argument('-p', '--patient_names', nargs='*',
+                        help='patient names')
+    parser.add_argument('-i', '--patient_ids', nargs='*', help='patient ids')
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('-n', type=int, help='split into N volumes')
-    group.add_argument('-u', '--uids',
-                       nargs='*', default=[], action=ParseAction,
-                       help='split into a volume for each forward slash'
-                            'separated SOP/series instance UID pair')
+    group.add_argument('-u', '--series_instance_uids', nargs='*', default=[],
+                       help='split volume for each series instance UID')
 
-    args = vars(parser.parse_args())
-    split_dicom_directory(args['DICOM_DIRECTORY'],
-                          axis=args['axis'],
-                          n=args['n'],
-                          update_image_position_patient=args['origin'],
-                          instance_uids=args['uids'],
-                          series_descriptions=args['descriptions'])
+    kwargs = vars(parser.parse_args())
+    directory = kwargs.pop('DICOM_DIRECTORY')
+    split_dicom_directory(directory, **kwargs)
