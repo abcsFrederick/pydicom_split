@@ -251,6 +251,8 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
 
             if series_descriptions:
                 split_dataset.SeriesDescription = series_descriptions[i]
+            else:
+                split_dataset.SeriesDescription += ' split'
 
             split_dataset.PatientName = patient_names[i]
             split_dataset.PatientID = patient_names[i]
