@@ -1,7 +1,5 @@
 #! /usr/bin/env python
 # -*- coding: utf-8 -*-
-from __future__ import print_function
-
 import copy
 import math
 import os
@@ -152,6 +150,51 @@ def make_output_paths(directory, n):
     return output_paths
 
 
+def derive_image_sequence(sop_class_uid, sop_instance_uid):
+    source_image = Dataset()
+    source_image.ReferencedSOPClassUID = sop_class_uid
+    source_image.ReferencedSOPInstanceUID = sop_instance_uid
+
+    purpose_of_reference = Dataset()
+    purpose_of_reference.CodeValue = '113130'
+    purpose_of_reference.CodingSchemeDesignator = 'DCM'
+    purpose_of_reference.CodeMeaning = \
+            'Predecessor containing group of imaging subjects'
+    source_image.PurposeOfReferenceCodeSequence = \
+            Sequence([purpose_of_reference])
+    derivation_image = Dataset()
+    derivation_image.SourceImageSequence = Sequence([source_image])
+    derivation_code = Dataset()
+    derivation_code.CodeValue = '113131'
+    derivation_code.CodingSchemeDesignator = 'DCM'
+    derivation_code.CodeMeaning = \
+            'Extraction of individual subject from group'
+    derivation_image.DerivationCodeSequence = Sequence([derivation_code])
+    derivation_image_sequence = Sequence([derivation_image])
+
+    return derivation_image_sequence
+
+
+def get_patient(patient_name, patient_id, n, patient_names=None, patient_ids=None):
+    if patient_names is None:
+        patient_names = parse_patient(patient_name)
+    if patient_ids is None:
+        patient_ids = parse_patient(patient_id)
+    if len(patient_names) != n:
+        patient_names = n * [str(patient_name)]
+        warnings.warn('failed to parse PatientName %s' % patient_name)
+    if len(patient_ids) != n:
+        patient_ids = n * [str(patient_id)]
+        warnings.warn('failed to parse PatientID %s' % patient_id)
+
+    source_patient = Dataset()
+    # FIXME: remove '_1'?
+    source_patient.PatientName = patient_name
+    source_patient.PatientID = patient_id
+
+    return patient_names, patient_ids, Sequence([source_patient])
+
+
 def set_pixel_data(dataset, pixel_array):
     dataset.PixelData = pixel_array.tostring()
     dataset.Rows, dataset.Columns = pixel_array.shape
@@ -181,39 +224,9 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
 
         dataset.DerivationDescription = derivation_description
 
-        source_image = Dataset()
-        source_image.ReferencedSOPClassUID = dataset.SOPClassUID
-        # FIXME: there are different SOPInstanceUIDs per image file
-        source_image.ReferencedSOPInstanceUID = dataset.SOPInstanceUID
-        purpose_of_reference = Dataset()
-        purpose_of_reference.CodeValue = '113130'
-        purpose_of_reference.CodingSchemeDesignator = 'DCM'
-        purpose_of_reference.CodeMeaning = 'Predecessor containing group of imaging subjects'
-        source_image.PurposeOfReferenceCodeSequence = Sequence([purpose_of_reference])
-        dataset.DerivationImageSequence = Sequence([Dataset()])
-        dataset.DerivationImageSequence[0].SourceImageSequence = Sequence([source_image])
-        derivation_code = Dataset()
-        derivation_code.CodeValue = '113131'
-        derivation_code.CodingSchemeDesignator = 'DCM'
-        derivation_code.CodeMeaning = 'Extraction of individual subject from group'
-        dataset.DerivationImageSequence[0].DerivationCodeSequence = Sequence([derivation_code])
+        dataset.DerivationImageSequence = derive_image_sequence(dataset.SOPClassUID, dataset.SOPInstanceUID)
 
-        if patient_names is None:
-            patient_names = parse_patient(dataset.PatientName)
-        if patient_ids is None:
-            patient_ids = parse_patient(dataset.PatientID)
-        if len(patient_names) != n:
-            patient_names = n * [str(dataset.PatientName)]
-            warnings.warn('failed to parse PatientName %s' % dataset.PatientName)
-        if len(patient_ids) != n:
-            patient_ids = n * [str(dataset.PatientID)]
-            warnings.warn('failed to parse PatientID %s' % dataset.PatientID)
-
-        source_patient = Dataset()
-        # FIXME: remove '_1'?
-        source_patient.PatientName = dataset.PatientName
-        source_patient.PatientID = dataset.PatientID
-        dataset.SourcePatientGroupIdentificationSequence = Sequence([source_patient])
+        patient_names, patient_ids, dataset.SourcePatientGroupIdentificationSequence = get_patient(dataset.PatientName, dataset.PatientID, n, patient_names, patient_ids)
 
         if not series_instance_uids:
             series_instance_uids = [x667_uuid() for i in range(n)]
@@ -227,9 +240,9 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
                 if not keep_origin:
                     affine_matrix = affine(dataset)
                     position = affine_matrix.dot(numpy.append(origin, [0, 1]))
+                    # maximum 16 characters
                     split_dataset.ImagePositionPatient = [str(p)[:16] for p in position[:3]]
 
-            # FIXME: should there be different SOPInstanceUIDs per image file?
             split_dataset.SOPInstanceUID = x667_uuid()
             split_dataset.file_meta.MediaStorageSOPInstanceUID = split_dataset.SOPInstanceUID
 
