@@ -201,7 +201,8 @@ def set_pixel_data(dataset, pixel_array):
 
 
 def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
-                          series_instance_uids=None, series_descriptions=None,
+                          study_instance_uids=None, series_instance_uids=None,
+                          series_descriptions=None,
                           derivation_description=None, patient_names=None,
                           patient_ids=None):
     if series_instance_uids:
@@ -209,6 +210,8 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
     if n is None:
         raise ValueError
     if series_descriptions and len(series_descriptions) != n:
+        raise ValueError
+    if study_instance_uids and len(study_instance_uids) != n:
         raise ValueError
 
     output_paths = make_output_paths(directory, n)
@@ -220,13 +223,16 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
             pixel_array = None
         dicom_splitter = DICOMSplitter(pixel_array, axis, n)
 
-        dataset.ImageType = ['DERIVED', 'SECONDARY']
+        dataset.ImageType = ['DERIVED', 'SECONDARY', 'SPLIT']
 
         dataset.DerivationDescription = derivation_description
 
         dataset.DerivationImageSequence = derive_image_sequence(dataset.SOPClassUID, dataset.SOPInstanceUID)
 
         patient_names, patient_ids, dataset.SourcePatientGroupIdentificationSequence = get_patient(dataset.PatientName, dataset.PatientID, n, patient_names, patient_ids)
+
+        if not study_instance_uids:
+            study_instance_uids = [x667_uuid() for i in range(n)]
 
         if not series_instance_uids:
             series_instance_uids = [x667_uuid() for i in range(n)]
@@ -245,6 +251,8 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
 
             split_dataset.SOPInstanceUID = x667_uuid()
             split_dataset.file_meta.MediaStorageSOPInstanceUID = split_dataset.SOPInstanceUID
+
+            split_dataset.StudyInstanceUID = study_instance_uids[i]
 
             split_dataset.SeriesInstanceUID = series_instance_uids[i]
             split_dataset.StorageMediaFileSetUID = series_instance_uids[i] + '.0'
@@ -274,9 +282,11 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--keep_origin', action='store_true',
                         help='origin position from offset from original'
                              ' volume, default no')
-    parser.add_argument('-s', '--series_descriptions', nargs='*',
+    parser.add_argument('-s', '--study_instance_uids', nargs='*',
+                        help='set the study instance UIDs')
+    parser.add_argument('-d', '--series_descriptions', nargs='*',
                         help='set the series descriptions')
-    parser.add_argument('-d', '--derivation_description',
+    parser.add_argument('-v', '--derivation_description',
                         default='Original volume split into equal subvolumes for each patient',
                         help='set the derivation description')
     parser.add_argument('-p', '--patient_names', nargs='*',
