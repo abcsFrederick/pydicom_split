@@ -216,14 +216,14 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
 
     output_paths = make_output_paths(directory, n)
 
-    for path, dataset in DICOMDirectory(sys.argv[1]):
+    for path, dataset in DICOMDirectory(directory):
         try:
             pixel_array = dataset.pixel_array
         except (TypeError, AttributeError):
             pixel_array = None
         dicom_splitter = DICOMSplitter(pixel_array, axis, n)
 
-        dataset.ImageType = ['DERIVED', 'SECONDARY', 'SPLIT']
+        dataset.ImageType = ['DERIVED', 'PRIMARY', 'SPLIT']
 
         dataset.DerivationDescription = derivation_description
 
@@ -275,7 +275,7 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('DICOM_DIRECTORY')
+    parser.add_argument('DICOM_DIRECTORY', nargs='*')
     parser.add_argument('-a', '--axis', type=int, default=1,
                         help='axis (0 for rows, 1 for columns)'
                              ', default columns')
@@ -284,6 +284,9 @@ if __name__ == '__main__':
                              ' volume, default no')
     parser.add_argument('-s', '--study_instance_uids', nargs='*',
                         help='set the study instance UIDs')
+    parser.add_argument('-S', '--unique_study_instance_uids',
+                        action='store_true',
+                        help='shared the study instance UID in all series')
     parser.add_argument('-d', '--series_descriptions', nargs='*',
                         help='set the series descriptions')
     parser.add_argument('-v', '--derivation_description',
@@ -298,5 +301,13 @@ if __name__ == '__main__':
                        help='split volume for each series instance UID')
 
     kwargs = vars(parser.parse_args())
-    directory = kwargs.pop('DICOM_DIRECTORY')
-    split_dicom_directory(directory, **kwargs)
+
+    directories = kwargs.pop('DICOM_DIRECTORY')
+
+    shared = not kwargs.pop('unique_study_instance_uids')
+    if shared and not kwargs.get('study_instance_uids'):
+        n = len(kwargs.get('series_instance_uids')) or kwargs.get('n')
+        kwargs['study_instance_uids'] = [x667_uuid() for i in range(n)]
+
+    for directory in directories:
+        split_dicom_directory(directory, **kwargs)
