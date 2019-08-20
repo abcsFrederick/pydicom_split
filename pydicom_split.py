@@ -138,15 +138,14 @@ def directory_name(directory, i):
     return directory.rstrip(os.sep) + '.%d' % (i + 1)
 
 
-def make_output_paths(directory, n):
-    output_paths = []
-    for i in range(n):
-        output_path = directory_name(directory, i)
+def make_output_paths(directory, n, output_paths=None):
+    if output_paths is None:
+        output_paths = [directory_name(directory, i) for i in range(n)]
+    for output_path in output_paths:
         try:
             os.mkdir(output_path)
         except FileExistsError:
             pass
-        output_paths.append(output_path)
     return output_paths
 
 
@@ -204,7 +203,7 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
                           study_instance_uids=None, series_instance_uids=None,
                           series_descriptions=None,
                           derivation_description=None, patient_names=None,
-                          patient_ids=None):
+                          patient_ids=None, output_paths=None):
     if series_instance_uids:
         n = len(series_instance_uids)
     if n is None:
@@ -214,7 +213,7 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
     if study_instance_uids and len(study_instance_uids) != n:
         raise ValueError
 
-    output_paths = make_output_paths(directory, n)
+    created_output_paths = make_output_paths(directory, n, output_paths)
 
     for path, dataset in DICOMDirectory(directory):
         try:
@@ -267,7 +266,7 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
 
             split_dataset.SeriesNumber = (10 *  split_dataset.SeriesNumber) + i + 1
 
-            filename = os.path.join(output_paths[i], os.path.basename(path))
+            filename = os.path.join(created_output_paths[i], os.path.basename(path))
             split_dataset.save_as(filename)
 
 
@@ -295,6 +294,7 @@ if __name__ == '__main__':
     parser.add_argument('-p', '--patient_names', nargs='*',
                         help='patient names')
     parser.add_argument('-i', '--patient_ids', nargs='*', help='patient ids')
+    parser.add_argument('-O', '--output_paths', nargs='*', help='output path names')
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('-n', type=int, help='split into N volumes')
     group.add_argument('-u', '--series_instance_uids', nargs='*', default=[],
