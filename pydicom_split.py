@@ -229,7 +229,7 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
 
         dataset.DerivationImageSequence = derive_image_sequence(dataset.SOPClassUID, dataset.SOPInstanceUID)
 
-        patient_names, patient_ids, dataset.SourcePatientGroupIdentificationSequence = get_patient(dataset.PatientName, dataset.PatientID, n, patient_names, patient_ids)
+        parsed_patient_names, parsed_patient_ids, dataset.SourcePatientGroupIdentificationSequence = get_patient(dataset.PatientName, dataset.PatientID, n, patient_names, patient_ids)
 
         if not study_instance_uids:
             study_instance_uids = [x667_uuid() for i in range(n)]
@@ -262,8 +262,8 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
             else:
                 split_dataset.SeriesDescription += ' split'
 
-            split_dataset.PatientName = patient_names[i]
-            split_dataset.PatientID = patient_names[i]
+            split_dataset.PatientName = parsed_patient_names[i]
+            split_dataset.PatientID = parsed_patient_names[i]
 
             split_dataset.SeriesNumber = (10 *  split_dataset.SeriesNumber) + i + 1
 
