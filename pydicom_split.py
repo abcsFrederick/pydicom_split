@@ -187,6 +187,7 @@ def derive_image_sequence(sop_class_uid, sop_instance_uid):
 
 
 def get_patient(patient_name, patient_id, n, patient_names=None, patient_ids=None):
+    name_trailing, id_trailing = '', ''
     if patient_names is None:
         patient_names, name_trailing = parse_patient(patient_name)
     if patient_ids is None:
