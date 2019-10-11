@@ -117,10 +117,12 @@ def x667_uuid():
 
 def parse_patient(patient, delimiter='_'):
     root, *ids = str(patient).split(delimiter)
-    if ids[-1] == '1':
-        warnings.warn('patient %s ends with 1, removing...' % patient)
-        ids.pop()
-    return [delimiter.join((root, id_)) for id_ in ids]
+    trailing = ''
+    if ids[-1] in map(str, range(1, 10)):
+        warnings.warn('patient %s ends with %s, removing...' % (patient,
+                                                                ids[-1]))
+        trailing = delimiter + ids.pop()
+    return [delimiter.join((root, id_)) for id_ in ids], trailing
 
 
 def affine(dataset):
@@ -147,6 +149,16 @@ def make_output_paths(directory, n, output_paths=None):
         except FileExistsError:
             pass
     return output_paths
+
+
+def make_output_path(directory, i, output_path=None):
+    if output_path is None:
+        output_path = directory_name(directory, i)
+    try:
+        os.mkdir(output_path)
+    except FileExistsError:
+        pass
+    return output_path
 
 
 def derive_image_sequence(sop_class_uid, sop_instance_uid):
@@ -176,9 +188,9 @@ def derive_image_sequence(sop_class_uid, sop_instance_uid):
 
 def get_patient(patient_name, patient_id, n, patient_names=None, patient_ids=None):
     if patient_names is None:
-        patient_names = parse_patient(patient_name)
+        patient_names, name_trailing = parse_patient(patient_name)
     if patient_ids is None:
-        patient_ids = parse_patient(patient_id)
+        patient_ids, id_trailing = parse_patient(patient_id)
     if len(patient_names) != n:
         patient_names = n * [str(patient_name)]
         warnings.warn('failed to parse PatientName %s' % patient_name)
@@ -191,7 +203,7 @@ def get_patient(patient_name, patient_id, n, patient_names=None, patient_ids=Non
     source_patient.PatientName = patient_name
     source_patient.PatientID = patient_id
 
-    return patient_names, patient_ids, Sequence([source_patient])
+    return (patient_names, patient_ids), Sequence([source_patient]), (name_trailing, id_trailing)
 
 
 def set_pixel_data(dataset, pixel_array):
@@ -203,7 +215,8 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
                           study_instance_uids=None, series_instance_uids=None,
                           series_descriptions=None,
                           derivation_description=None, patient_names=None,
-                          patient_ids=None, output_paths=None):
+                          patient_ids=None, output_paths=None,
+                          mangle_output_paths=False):
     if series_instance_uids:
         n = len(series_instance_uids)
     if n is None:
@@ -212,8 +225,6 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
         raise ValueError
     if study_instance_uids and len(study_instance_uids) != n:
         raise ValueError
-
-    created_output_paths = make_output_paths(directory, n, output_paths)
 
     for path, dataset in DICOMDirectory(directory):
         try:
@@ -228,7 +239,9 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
 
         dataset.DerivationImageSequence = derive_image_sequence(dataset.SOPClassUID, dataset.SOPInstanceUID)
 
-        parsed_patient_names, parsed_patient_ids, dataset.SourcePatientGroupIdentificationSequence = get_patient(dataset.PatientName, dataset.PatientID, n, patient_names, patient_ids)
+        parsed, dataset.SourcePatientGroupIdentificationSequence, trailing = get_patient(dataset.PatientName, dataset.PatientID, n, patient_names, patient_ids)
+        parsed_patient_names, parsed_patient_ids = parsed
+        name_trailing, id_trailing = trailing
 
         if not study_instance_uids:
             study_instance_uids = [x667_uuid() for i in range(n)]
@@ -262,11 +275,18 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
                 split_dataset.SeriesDescription += ' split'
 
             split_dataset.PatientName = parsed_patient_names[i]
-            split_dataset.PatientID = parsed_patient_names[i]
+            split_dataset.PatientID = parsed_patient_ids[i]
 
             split_dataset.SeriesNumber = (10 *  split_dataset.SeriesNumber) + i + 1
 
-            filename = os.path.join(created_output_paths[i], os.path.basename(path))
+            if output_paths:
+                output_path = output_paths[i]
+            elif mangle_output_paths:
+                output_path = parsed_patient_ids[i] + id_trailing
+            else:
+                output_path = None
+            created_output_path = make_output_path(directory, i, output_path)
+            filename = os.path.join(created_output_path, os.path.basename(path))
             split_dataset.save_as(filename)
 
 
@@ -295,6 +315,9 @@ if __name__ == '__main__':
                         help='patient names')
     parser.add_argument('-i', '--patient_ids', nargs='*', help='patient ids')
     parser.add_argument('-O', '--output_paths', nargs='*', help='output path names')
+    parser.add_argument('-X', '--mangle_output_paths', action='store_true',
+                        help='set output path to split patient ID plus'
+                             'trailing characters')
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('-n', type=int, help='split into N volumes')
     group.add_argument('-u', '--series_instance_uids', nargs='*', default=[],
