@@ -6,3 +6,5 @@ Pancreas Adenocarcinoma-292921-168-R
 result
 Dockerfile
 shell.sh
+.idea
+.DS_Store
