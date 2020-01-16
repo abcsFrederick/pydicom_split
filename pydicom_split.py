@@ -137,7 +137,7 @@ def affine(dataset):
 
 
 def directory_name(directory, i):
-    return directory.rstrip(os.sep) + '.%d' % (i + 1)
+    return os.path.join(directory.rstrip(os.sep), os.path.split(directory.rstrip(os.sep))[-1] + '.%d' % (i + 1))
 
 
 def make_output_paths(directory, n, output_paths=None):
@@ -186,19 +186,32 @@ def derive_image_sequence(sop_class_uid, sop_instance_uid):
     return derivation_image_sequence
 
 
-def get_patient(patient_name, patient_id, n, patient_names=None, patient_ids=None):
+def get_patient(patient_name, patient_id, n, patient_names=None, patient_ids=None, order=None):
     name_trailing, id_trailing = '', ''
     if patient_names is None:
         patient_names, name_trailing = parse_patient(patient_name)
     if patient_ids is None:
         patient_ids, id_trailing = parse_patient(patient_id)
     if len(patient_names) != n:
-        patient_names = n * [str(patient_name)]
-        warnings.warn('failed to parse PatientName %s' % patient_name)
+        tmpName = 3 * ['blank']
+        for i in range(len(order)):
+            if int(order[i]) != 0:
+                try:
+                    tmpName[i] = patient_names.pop(0)
+                except:
+                    continue
+        patient_names = tmpName
+        warnings.warn('failed to parse PatientName %s, append a blank' % patient_name)
     if len(patient_ids) != n:
-        patient_ids = n * [str(patient_id)]
-        warnings.warn('failed to parse PatientID %s' % patient_id)
-
+        tmpId = 3 * ['blank']
+        for i in range(len(order)):
+            if int(order[i]) != 0:
+                try:
+                    tmpId[i] = patient_ids.pop(0)
+                except:
+                    continue
+        patient_ids = tmpId
+        warnings.warn('failed to parse PatientID %s, append a blank' % patient_id)
     source_patient = Dataset()
     # FIXME: remove '_1'?
     source_patient.PatientName = patient_name
@@ -211,13 +224,97 @@ def set_pixel_data(dataset, pixel_array):
     dataset.PixelData = pixel_array.tostring()
     dataset.Rows, dataset.Columns = pixel_array.shape
 
-
-def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
+def checkDirectory(directory, output_dir=None):
+    for root, subdirs, files in os.walk(directory):
+        if len(files):
+            if files.pop(0) != '.DS_Store':
+                newRoot = os.path.join(output_dir, root)
+                if not os.path.exists(newRoot):
+                    os.makedirs(newRoot)
+                yield root, newRoot
+def split_dicom_directory(directory, axis=0, n=3, keep_origin=False,
                           study_instance_uids=None, series_instance_uids=None,
-                          series_descriptions=None,
+                          series_descriptions=None, output_dir=None,
                           derivation_description=None, patient_names=None,
                           patient_ids=None, output_paths=None,
-                          mangle_output_paths=False):
+                          mangle_output_paths=False, order=None):
+    # FIXME processing all subfolder with same split volumn
+    # if series_instance_uids:
+    #     n = len(series_instance_uids)
+    # if n is None:
+    #     raise ValueError
+    # if series_descriptions and len(series_descriptions) != n:
+    #     raise ValueError
+    # if study_instance_uids and len(study_instance_uids) != n:
+    #     raise ValueError
+    # for directoryChecked, newRoot in checkDirectory(directory, output_dir):
+    #     print(directoryChecked)
+    #     for path, dataset in DICOMDirectory(directoryChecked):
+    #         try:
+    #             pixel_array = dataset.pixel_array
+    #         except (TypeError, AttributeError):
+    #             pixel_array = None
+    #         dicom_splitter = DICOMSplitter(pixel_array, axis, n)
+    #
+    #         dataset.ImageType = ['DERIVED', 'PRIMARY', 'SPLIT']
+    #
+    #         dataset.DerivationDescription = derivation_description
+    #
+    #         dataset.DerivationImageSequence = derive_image_sequence(dataset.SOPClassUID, dataset.SOPInstanceUID)
+    #
+    #         parsed, dataset.SourcePatientGroupIdentificationSequence, trailing = get_patient(dataset.PatientName, dataset.PatientID, n, patient_names, patient_ids)
+    #         parsed_patient_names, parsed_patient_ids = parsed
+    #         name_trailing, id_trailing = trailing
+    #
+    #         if not study_instance_uids:
+    #             study_instance_uids = [x667_uuid() for i in range(n)]
+    #
+    #         if not series_instance_uids:
+    #             series_instance_uids = [x667_uuid() for i in range(n)]
+    #
+    #         for i, origin, pixel_array in dicom_splitter:
+    #             split_dataset = copy.deepcopy(dataset)
+    #
+    #             if pixel_array is not None:
+    #                 set_pixel_data(split_dataset, pixel_array)
+    #
+    #                 if not keep_origin:
+    #                     affine_matrix = affine(dataset)
+    #                     position = affine_matrix.dot(numpy.append(origin, [0, 1]))
+    #                     # maximum 16 characters
+    #                     split_dataset.ImagePositionPatient = [str(p)[:16] for p in position[:3]]
+    #
+    #             split_dataset.SOPInstanceUID = x667_uuid()
+    #             split_dataset.file_meta.MediaStorageSOPInstanceUID = split_dataset.SOPInstanceUID
+    #
+    #             split_dataset.StudyInstanceUID = study_instance_uids[i]
+    #
+    #             split_dataset.SeriesInstanceUID = series_instance_uids[i]
+    #             split_dataset.StorageMediaFileSetUID = series_instance_uids[i] + '.0'
+    #
+    #             if series_descriptions:
+    #                 split_dataset.SeriesDescription = series_descriptions[i]
+    #             else:
+    #                 split_dataset.SeriesDescription += ' split'
+    #
+    #             split_dataset.PatientName = parsed_patient_names[i]
+    #             split_dataset.PatientID = parsed_patient_ids[i]
+    #
+    #             split_dataset.SeriesNumber = (10 *  split_dataset.SeriesNumber) + i + 1
+    #
+    #             if output_paths:
+    #                 output_path = output_paths[i]
+    #             elif mangle_output_paths:
+    #                 output_path = parsed_patient_ids[i] + id_trailing
+    #             else:
+    #                 output_path = None
+    #             created_output_path = make_output_path(newRoot, i, output_path)
+    #             filename = os.path.join(created_output_path, os.path.basename(path))
+    #             split_dataset.save_as(filename)
+    order = order.split(',')
+    if n != len(order):
+        raise Exception('[ERROR] # of split has to equal to length of order')
+
     if series_instance_uids:
         n = len(series_instance_uids)
     if n is None:
@@ -240,8 +337,9 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
 
         dataset.DerivationImageSequence = derive_image_sequence(dataset.SOPClassUID, dataset.SOPInstanceUID)
 
-        parsed, dataset.SourcePatientGroupIdentificationSequence, trailing = get_patient(dataset.PatientName, dataset.PatientID, n, patient_names, patient_ids)
+        parsed, dataset.SourcePatientGroupIdentificationSequence, trailing = get_patient(dataset.PatientName, dataset.PatientID, n, patient_names, patient_ids, order)
         parsed_patient_names, parsed_patient_ids = parsed
+        # print(parsed_patient_names, parsed_patient_ids)
         name_trailing, id_trailing = trailing
 
         if not study_instance_uids:
@@ -251,46 +349,44 @@ def split_dicom_directory(directory, axis=0, n=2, keep_origin=False,
             series_instance_uids = [x667_uuid() for i in range(n)]
 
         for i, origin, pixel_array in dicom_splitter:
-            split_dataset = copy.deepcopy(dataset)
+            if parsed_patient_names[i] != 'blank':
+                split_dataset = copy.deepcopy(dataset)
 
-            if pixel_array is not None:
-                set_pixel_data(split_dataset, pixel_array)
+                if pixel_array is not None:
+                    set_pixel_data(split_dataset, pixel_array)
 
-                if not keep_origin:
-                    affine_matrix = affine(dataset)
-                    position = affine_matrix.dot(numpy.append(origin, [0, 1]))
-                    # maximum 16 characters
-                    split_dataset.ImagePositionPatient = [str(p)[:16] for p in position[:3]]
+                    if not keep_origin:
+                        affine_matrix = affine(dataset)
+                        position = affine_matrix.dot(numpy.append(origin, [0, 1]))
+                        # maximum 16 characters
+                        split_dataset.ImagePositionPatient = [str(p)[:16] for p in position[:3]]
 
-            split_dataset.SOPInstanceUID = x667_uuid()
-            split_dataset.file_meta.MediaStorageSOPInstanceUID = split_dataset.SOPInstanceUID
+                split_dataset.SOPInstanceUID = x667_uuid()
+                split_dataset.file_meta.MediaStorageSOPInstanceUID = split_dataset.SOPInstanceUID
 
-            split_dataset.StudyInstanceUID = study_instance_uids[i]
+                split_dataset.StudyInstanceUID = study_instance_uids[i]
 
-            split_dataset.SeriesInstanceUID = series_instance_uids[i]
-            split_dataset.StorageMediaFileSetUID = series_instance_uids[i] + '.0'
+                split_dataset.SeriesInstanceUID = series_instance_uids[i]
+                split_dataset.StorageMediaFileSetUID = series_instance_uids[i] + '.0'
 
-            if series_descriptions:
-                split_dataset.SeriesDescription = series_descriptions[i]
-            else:
-                split_dataset.SeriesDescription += ' split'
+                if series_descriptions:
+                    split_dataset.SeriesDescription = series_descriptions[i]
+                else:
+                    split_dataset.SeriesDescription += ' split'
 
-            split_dataset.PatientName = parsed_patient_names[i]
-            split_dataset.PatientID = parsed_patient_ids[i]
+                split_dataset.PatientName = parsed_patient_names[i]
+                split_dataset.PatientID = parsed_patient_ids[i]
 
-            split_dataset.SeriesNumber = (10 *  split_dataset.SeriesNumber) + i + 1
-
-            if output_paths:
-                output_path = output_paths[i]
-            elif mangle_output_paths:
-                output_path = parsed_patient_ids[i] + id_trailing
-            else:
-                output_path = None
-            created_output_path = make_output_path(directory, i, output_path)
-            filename = os.path.join(created_output_path, os.path.basename(path))
-            split_dataset.save_as(filename)
-
-
+                split_dataset.SeriesNumber = (10 *  split_dataset.SeriesNumber) + i + 1
+                if output_paths:
+                    output_path = output_paths[i]
+                elif mangle_output_paths:
+                    output_path = parsed_patient_ids[i] + id_trailing
+                else:
+                    output_path = None
+                created_output_path = make_output_path(directory, i, output_path)
+                filename = os.path.join(created_output_path, os.path.basename(path))
+                split_dataset.save_as(filename)
 if __name__ == '__main__':
     import argparse
 
@@ -316,9 +412,12 @@ if __name__ == '__main__':
                         help='patient names')
     parser.add_argument('-i', '--patient_ids', nargs='*', help='patient ids')
     parser.add_argument('-O', '--output_paths', nargs='*', help='output path names')
+    parser.add_argument('-Outdir', '--output_dir', help='save in new output directory')
     parser.add_argument('-X', '--mangle_output_paths', action='store_true',
                         help='set output path to split patient ID plus'
                              'trailing characters')
+    parser.add_argument('-order', '--order', help='order of patient placed in scanner', default='1,1,1')
+
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('-n', type=int, help='split into N volumes')
     group.add_argument('-u', '--series_instance_uids', nargs='*', default=[],
@@ -332,6 +431,6 @@ if __name__ == '__main__':
     if shared and not kwargs.get('study_instance_uids'):
         n = len(kwargs.get('series_instance_uids')) or kwargs.get('n')
         kwargs['study_instance_uids'] = [x667_uuid() for i in range(n)]
-
+    # print(len(kwargs['order'].split(',')))
     for directory in directories:
         split_dicom_directory(directory, **kwargs)
