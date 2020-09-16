@@ -1,10 +1,8 @@
 env
-Applications
-Melanoma_425362-245-T.zip
-Melanoma_425362-245-T
-Pancreas Adenocarcinoma-292921-168-R
+data
 result
-Dockerfile
 shell.sh
 .idea
 .DS_Store
+split.py
+*.py[cod]
