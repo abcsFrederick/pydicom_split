@@ -6,3 +6,5 @@ shell.sh
 .DS_Store
 split.py
 *.py[cod]
+split.py
+exiftest.py

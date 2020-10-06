@@ -50,11 +50,12 @@ class DICOMDirectory:
         raise StopIteration
 
 class DICOMSplitterTB:
-    def __init__(self, pixel_array=None, axis=0, nT=2, nB=2):
+    def __init__(self, pixel_array=None, axis=0, nT=2, nB=2, offset=5):
         self._pixel_array = pixel_array
         self._axis = axis
         self._nT = nT
         self._nB = nB
+        self._offset = offset
         self._nTotal = nB + nT
 
     @property
@@ -87,7 +88,15 @@ class DICOMSplitterTB:
 
     @nB.setter
     def nB(self, nB):
-        self._nTB = nB
+        self._nB = nB
+
+    @property
+    def offset(self):
+        return self._offset
+
+    @offset.setter
+    def offset(self, offset):
+        self._offset = offset
 
     def __iter__(self):
         self.index = 0
@@ -95,9 +104,10 @@ class DICOMSplitterTB:
             # assume only 2 row for now
             sizeC = self._pixel_array.shape[1]
             sizeR = self._pixel_array.shape[0]
+            self._offsetInPx = math.floor(self._offset / 100 * sizeR)
             self.sizeTC = int(math.floor(sizeC/self._nT))
             self.sizeBC = int(math.floor(sizeC/self._nB))
-            self.sizeR = int(math.floor(sizeR/2))
+            self.sizeR = int(math.floor(sizeR/2)) - self._offsetInPx
         return self
 
     def __next__(self):
@@ -147,7 +157,7 @@ class DICOMSplitterTB:
 
             # assume only 2 row for now
             start[0] = self.sizeR + offsetR
-            stop[0] = start[0] + self.sizeR
+            stop[0] = start[0] + self.sizeR + 2 * self._offsetInPx
             indicesC = numpy.arange(start[1], stop[1])
             indicesR = numpy.arange(start[0], stop[0])
         self.index += 1
@@ -236,6 +246,24 @@ def parse_patient(patient, delimiter='_'):
         trailing = delimiter + ids.pop()
     return [delimiter.join((root, re.sub("[^0-9]", "", id_))) for id_ in ids], trailing
 
+def parse_patient_TB(patient, delimiter='_'):
+    root, *ids = str(patient).split(delimiter)
+    tmp = 3 * ['blank']
+    trailing = ''
+    if ids[-1] in map(str, range(1, 10)):
+        warnings.warn('patient %s ends with %s, removing...' % (patient,
+                                                                ids[-1]))
+        trailing = delimiter + ids.pop()
+    # Need to tell the position T, Rp, L
+    for id_ in ids:
+        if re.search('\(T\)', id_):
+            tmp[0] = delimiter.join((root, id_))
+        elif re.search('\(L\)', id_):
+            tmp[1] = delimiter.join((root, id_))
+        elif re.search('\(Rp\)', id_):
+            tmp[2] = delimiter.join((root, id_))
+    return tmp, trailing
+
 
 def affine(dataset):
     S = numpy.array(dataset.ImagePositionPatient, numpy.float64)
@@ -296,14 +324,50 @@ def derive_image_sequence(sop_class_uid, sop_instance_uid):
     derivation_image_sequence = Sequence([derivation_image])
 
     return derivation_image_sequence
+def get_patient_TB(patient_name, patient_id, n, patient_names=None, patient_ids=None, order=None):
+    name_trailing, id_trailing = '', ''
+    if patient_names is None:
+        patient_names, name_trailing = parse_patient_TB(patient_name)
+    if patient_ids is None:
+        patient_ids, id_trailing = parse_patient_TB(patient_name)
+        # in case patient id format is different
+        # patient_ids, id_trailing = parse_patient(patient_id)
+    # print(patient_names)
+    if len(patient_names) != n:
+        tmpName = 3 * ['blank']
+        for i in range(len(order)):
+            if int(order[i]) != 0:
+                try:
+                    tmpName[i] = patient_names.pop(0)
+                except:
+                    continue
+        patient_names = tmpName
+        warnings.warn('failed to parse PatientName %s, append a blank' % patient_name)
+    if len(patient_ids) != n:
+        tmpId = 3 * ['blank']
+        for i in range(len(order)):
+            if int(order[i]) != 0:
+                try:
+                    tmpId[i] = patient_ids.pop(0)
+                except:
+                    continue
+        patient_ids = tmpId
+        warnings.warn('failed to parse PatientID %s, append a blank' % patient_id)
+    source_patient = Dataset()
+    # FIXME: remove '_1'?
+    source_patient.PatientName = patient_name
+    source_patient.PatientID = patient_id
 
-
+    return (patient_names, patient_ids), Sequence([source_patient]), (name_trailing, id_trailing)
 def get_patient(patient_name, patient_id, n, patient_names=None, patient_ids=None, order=None):
     name_trailing, id_trailing = '', ''
     if patient_names is None:
         patient_names, name_trailing = parse_patient(patient_name)
     if patient_ids is None:
-        patient_ids, id_trailing = parse_patient(patient_id)
+        patient_ids, id_trailing = parse_patient(patient_name)
+        # in case patient id format is different
+        # patient_ids, id_trailing = parse_patient(patient_id)
+    # print(patient_names)
     if len(patient_names) != n:
         tmpName = 3 * ['blank']
         for i in range(len(order)):
@@ -346,7 +410,7 @@ def checkDirectory(directory, output_dir=None):
                 if not os.path.exists(newRoot):
                     os.makedirs(newRoot)
                 yield root, newRoot
-def split_dicom_directory(directory, axis=0, n=3, nTB=None, keep_origin=False,
+def split_dicom_directory(directory, axis=0, n=3, nTB=None, offset=5, keep_origin=False,
                           study_instance_uids=None, series_instance_uids=None,
                           series_descriptions=None, output_dir=None,
                           derivation_description=None, patient_names=None,
@@ -384,7 +448,7 @@ def split_dicom_directory(directory, axis=0, n=3, nTB=None, keep_origin=False,
             if nTB is not None:
                 nT = int(kwargs.get('nTB')[0].split(',')[0])
                 nB = int(kwargs.get('nTB')[0].split(',')[1])
-                dicom_splitter = DICOMSplitterTB(pixel_array, axis, nT, nB)
+                dicom_splitter = DICOMSplitterTB(pixel_array, axis, nT, nB, offset)
                 n = nT + nB
             else:
                 dicom_splitter = DICOMSplitter(pixel_array, axis, n)
@@ -393,8 +457,13 @@ def split_dicom_directory(directory, axis=0, n=3, nTB=None, keep_origin=False,
             dataset.DerivationDescription = derivation_description
 
             dataset.DerivationImageSequence = derive_image_sequence(dataset.SOPClassUID, dataset.SOPInstanceUID)
-
-            parsed, dataset.SourcePatientGroupIdentificationSequence, trailing = get_patient(dataset.PatientName, dataset.PatientID, n, patient_names, patient_ids, order)
+            if nTB is not None:
+                parsed, dataset.SourcePatientGroupIdentificationSequence, trailing = get_patient_TB(dataset.PatientName,
+                                                                                                 dataset.PatientID, n,
+                                                                                                 patient_names,
+                                                                                                 patient_ids, order)
+            else:
+                parsed, dataset.SourcePatientGroupIdentificationSequence, trailing = get_patient(dataset.PatientName, dataset.PatientID, n, patient_names, patient_ids, order)
 
 
             parsed_patient_names, parsed_patient_ids = parsed
@@ -487,6 +556,8 @@ if __name__ == '__main__':
     parser.add_argument('-order', '--order', help='order of patient placed in scanner', default='1,1,1')
     parser.add_argument('-orderT', '--orderT', help='order of patient placed in scanner of top bed', default='1,1,1')
     parser.add_argument('-orderB', '--orderB', help='order of patient placed in scanner of bottom bed', default='1,1,1')
+    parser.add_argument('-offset', '--offset', type=int, default=5,
+                        help='offset from center, default 5 percent from center')
 
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('-n', type=int, help='split into N volumes')

@@ -43,6 +43,8 @@ For multiple column or double row dataset
 ```
 
 ### 3. Run
+There are some testing examples under the test directory which can give you better understanding.
+
 If you want split all three column volume.
 <img align="left" width="100" height="100" src="test/SingleRow/thmb_1.3.46.670589.11.17169.5.0.3060.2019082909190671216.jpg">
 ```
@@ -54,12 +56,13 @@ If you want remove right column empty volume.
   python pydicom_split.py test/SingRowLastOneEmpty/ -n 3 -order 1,1,0 -Outdir ./output
 
 ```
-If you want split two row volume.
+If you want split two rows volume.
 <img align="left" width="100" height="100" src="test/TwoRows/thmb_1.3.6.1.4.1.12842.1.1.14.4.20200910.100022.319.463497616.jpg">
 ```
   python pydicom_split.py test/TwoRows/ -nTB 1,2 -orderT 1 -orderB 1,1 -Outdir ./output
 
 ```
+Hint: For two rows volume, make sure patient name contains special characters (Rp for bottom right)(L for bottom left)(T for top) to make a correct split. e.g. Patient_name: Session1_716(T)_719(Rp)_730(L)
 ### 4. Web interface
-NCI ABCS IVG provides girder based dicom split workflow interface for user to quick and easy visualize and utilize this script, contact IVG group for more informations.
+NCI ABCS IVG provides girder based dicom split workflow interface for user to quick and easy visualize and utilize this script, contact IVG group for more informations. (Two rows volume split has not been implemented in web interface yet.)
 <img align="left" src="test/webInterface.png"> 
