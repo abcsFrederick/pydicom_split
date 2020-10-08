@@ -31,7 +31,7 @@ For single column or single row dataset
   -order order          if there is an empty volumn in dataset,
                         specify volume(s) need to be split (1,1,1 means split 
                         all three columns mice, 1,0,1 means middle volumn is empty)
-For multiple column or double row dataset
+For multiple column and double row dataset
   -nTB N1,N2            split top row into N1 volumes, and bottom row into N2 
                         volumes
   -orderT orderT        if there is an empty volumn in the top row of dataset,
@@ -40,6 +40,8 @@ For multiple column or double row dataset
   -orderB orderB        if there is an empty volumn in the bottom row of  dataset,
                         specify volume(s) need to be split (1,1 means split 
                         bottom row into two columns mice, 1,0 means skip the right mice of bottom row)
+  -offset offset        Offset from center, default 5 percent from center, only
+                        apply to double row dataset
 ```
 
 ### 3. Run
